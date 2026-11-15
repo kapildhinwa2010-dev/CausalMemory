@@ -1,18 +1,21 @@
-# CausalMemory - Fact memory with cause-effect chains derived at query time
+# CausalMemory - Cause-effect chains derived at query time
 # Part of the Kapildhinwa2010-dev Toolkit.
 
-"""KnowledgeNet - facts, alias derivation and chain reasoning.
+"""CausalMemory - cause-effect chains derived at query time.
 
-Lineage: reserv.dean-part-2 (HELIX). Facts are stored as (subject, predicate,
-object) triples; aliases are derived transitively from equality facts; chain
-reasoning walks predicates to answer multi-hop queries.
+Lineage: reserv.dean-part-2 (HELIX). On top of the shared triple store
+this repo focuses on CAUSALITY: ``add_cause`` stores "causes" edges,
+``effects_of``/``causes_of`` walk them forwards or backwards (optionally
+transitively), and ``causal_chain`` follows the first causal path.
+
+HONEST LIMITATION: "causes" edges are asserted facts, not discovered
+causality - this module organizes and walks what you store; it cannot
+validate that the causal claims are true.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-
-import numpy as np
 
 __all__ = ["Fact", "KnowledgeNet"]
 
@@ -44,7 +47,7 @@ class Fact:
 
 
 class KnowledgeNet:
-    """Zero-overhead fact base with alias and chain reasoning."""
+    """Fact store with indexed direct and reverse queries."""
 
     def __init__(self) -> None:
         self._facts: set = set()
@@ -120,14 +123,52 @@ class KnowledgeNet:
             current = nxt[0]
         return hops
 
-    def interference(self, query: str, top_k: int = 3) -> list:
-        """Rank facts related to ``query`` by co-occurrence interference."""
-        if top_k < 1:
-            raise ValueError("top_k must be >= 1")
-        scores: dict = {}
-        for fact in self._facts:
-            if query in (fact.subject, fact.object):
-                related = self.query(subject=fact.object) + self.query(obj=fact.subject)
-                scores[fact] = len(related)
-        ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0].as_tuple()))
-        return [fact for fact, _ in ranked[:top_k]]
+    def add_cause(self, cause: str, effect: str) -> bool:
+        """Store a ``cause`` --causes--> ``effect`` edge."""
+        return self.add(cause, "causes", effect)
+
+    def _forward_reach(self, start: str, max_hops: int = 16) -> list:
+        seen: set = set()
+        frontier = [start]
+        for _ in range(max_hops):
+            nxt = []
+            for node in frontier:
+                for f in self._by_subject.get(node, []):
+                    if f.predicate == "causes" and f.object not in seen:
+                        seen.add(f.object)
+                        nxt.append(f.object)
+            if not nxt:
+                break
+            frontier = nxt
+        return sorted(seen)
+
+    def _backward_reach(self, start: str, max_hops: int = 16) -> list:
+        seen: set = set()
+        frontier = [start]
+        for _ in range(max_hops):
+            nxt = []
+            for node in frontier:
+                for f in self._by_object.get(node, []):
+                    if f.predicate == "causes" and f.subject not in seen:
+                        seen.add(f.subject)
+                        nxt.append(f.subject)
+            if not nxt:
+                break
+            frontier = nxt
+        return sorted(seen)
+
+    def effects_of(self, cause: str, transitive: bool = False) -> list:
+        """Direct (or transitive) effects of ``cause``."""
+        if transitive:
+            return self._forward_reach(cause)
+        return sorted({f.object for f in self._by_subject.get(cause, []) if f.predicate == "causes"})
+
+    def causes_of(self, effect: str, transitive: bool = False) -> list:
+        """Direct (or transitive) causes of ``effect``."""
+        if transitive:
+            return self._backward_reach(effect)
+        return sorted({f.subject for f in self._by_object.get(effect, []) if f.predicate == "causes"})
+
+    def causal_chain(self, start: str, max_hops: int = 8) -> list:
+        """First causal path from ``start`` (cycle-safe)."""
+        return self.chain(start, "causes", max_hops=max_hops)

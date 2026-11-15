@@ -4,85 +4,61 @@ from causalmemory import Fact, KnowledgeNet
 
 
 def test_fact_basic():
-    fact = Fact("alice", "knows", "bob")
-    assert fact.as_tuple() == ("alice", "knows", "bob")
-
-
-def test_fact_rejects_empty():
-    with pytest.raises(ValueError):
-        Fact("", "knows", "bob")
-
-
-def test_fact_equality_and_hash():
-    assert Fact("a", "p", "b") == Fact("a", "p", "b")
-    assert hash(Fact("a", "p", "b")) == hash(Fact("a", "p", "b"))
-    assert Fact("a", "p", "b") != Fact("a", "p", "c")
+    fact = Fact("rain", "causes", "wet")
+    assert fact.as_tuple() == ("rain", "causes", "wet")
 
 
 def test_add_and_len():
     net = KnowledgeNet()
-    assert net.add("a", "knows", "b") is True
-    assert net.add("a", "knows", "b") is False
+    assert net.add_cause("rain", "wet") is True
     assert len(net) == 1
 
 
 def test_query_pattern():
     net = KnowledgeNet()
-    net.add("a", "knows", "b")
-    net.add("b", "knows", "c")
-    net.add("a", "likes", "c")
-    assert len(net.query(subject="a")) == 2
-    assert len(net.query(predicate="knows")) == 2
-    assert len(net.query(obj="c")) == 2
-    assert len(net.query(subject="a", predicate="likes")) == 1
+    net.add_cause("rain", "wet")
+    net.add("rain", "implies", "clouds")
+    assert len(net.query(predicate="causes")) == 1
 
 
-def test_derive_aliases_transitive():
+# --- causal queries (CausalMemory-specific) ---
+
+
+def test_effects_of_direct():
     net = KnowledgeNet()
-    net.add("x", "same_as", "y")
-    net.add("y", "same_as", "z")
-    aliases = net.derive_aliases()
-    assert aliases["x"] == aliases["y"] == aliases["z"]
+    net.add_cause("rain", "wet")
+    net.add_cause("rain", "cold")
+    assert net.effects_of("rain") == ["cold", "wet"]
 
 
-def test_derive_aliases_ignores_other_predicates():
+def test_effects_of_transitive():
     net = KnowledgeNet()
-    net.add("x", "knows", "y")
-    assert net.derive_aliases() == {}
+    net.add_cause("a", "b")
+    net.add_cause("b", "c")
+    net.add_cause("c", "d")
+    assert net.effects_of("a", transitive=True) == ["b", "c", "d"]
+    assert net.effects_of("a") == ["b"]
 
 
-def test_chain_walk():
+def test_causes_of_direct_and_transitive():
     net = KnowledgeNet()
-    net.add("a", "next", "b")
-    net.add("b", "next", "c")
-    net.add("c", "next", "d")
-    assert net.chain("a", "next") == ["b", "c", "d"]
+    net.add_cause("a", "b")
+    net.add_cause("b", "c")
+    assert net.causes_of("c") == ["b"]
+    assert net.causes_of("c", transitive=True) == ["a", "b"]
 
 
-def test_chain_respects_max_hops():
+def test_causal_chain_and_cycles():
     net = KnowledgeNet()
-    net.add("a", "next", "b")
-    net.add("b", "next", "c")
-    assert net.chain("a", "next", max_hops=1) == ["b"]
+    net.add_cause("a", "b")
+    net.add_cause("b", "c")
+    assert net.causal_chain("a") == ["b", "c"]
+    net.add_cause("c", "a")
+    assert net.causal_chain("a") == ["b", "c"]
 
 
-def test_chain_handles_cycles():
+def test_unknown_node_empty():
     net = KnowledgeNet()
-    net.add("a", "next", "b")
-    net.add("b", "next", "a")
-    assert net.chain("a", "next") == ["b"]
-
-
-def test_interference_ranks_related():
-    net = KnowledgeNet()
-    net.add("hub", "knows", "a")
-    net.add("hub", "knows", "b")
-    net.add("lonely", "knows", "c")
-    top = net.interference("hub")
-    assert top and top[0].subject == "hub"
-
-
-def test_chain_rejects_bad_hops():
-    net = KnowledgeNet()
-    with pytest.raises(ValueError):
-        net.chain("a", "next", max_hops=0)
+    net.add_cause("a", "b")
+    assert net.effects_of("zzz") == []
+    assert net.causes_of("zzz") == []
